@@ -43,10 +43,10 @@ void Encoder::setup() {
         .Mode = SPI_MODE_MASTER,
         .Direction = SPI_DIRECTION_2LINES,
         .DataSize = SPI_DATASIZE_16BIT,
-        .CLKPolarity = (mode_ == MODE_SPI_ABS_AEAT || mode_ == MODE_SPI_ABS_MA732) ? SPI_POLARITY_HIGH : SPI_POLARITY_LOW,
+        .CLKPolarity = (mode_ == MODE_SPI_ABS_AEAT || mode_ == MODE_SPI_ABS_MA732 || mode_ == MODE_SPI_ABS_MT6835) ? SPI_POLARITY_HIGH : SPI_POLARITY_LOW,
         .CLKPhase = SPI_PHASE_2EDGE,
         .NSS = SPI_NSS_SOFT,
-        .BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16,
+        .BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32,
         .FirstBit = SPI_FIRSTBIT_MSB,
         .TIMode = SPI_TIMODE_DISABLE,
         .CRCCalculation = SPI_CRCCALCULATION_DISABLE,
@@ -64,6 +64,14 @@ void Encoder::setup() {
             axis_->controller_.anticogging_valid_ = true;
         }
     }
+	    if (mode_ == MODE_SPI_ABS_MT6835) {
+
+        spi_task_.length = 4;
+    } else {
+        spi_task_.length = 1;  
+    }
+	
+	
 }
 
 void Encoder::set_error(Error error) {
@@ -494,6 +502,7 @@ void Encoder::sample_now() {
         case MODE_SPI_ABS_AEAT:
         case MODE_SPI_ABS_RLS:
         case MODE_SPI_ABS_MA732:
+		case MODE_SPI_ABS_MT6835:
         {
             abs_spi_start_transaction();
             // Do nothing
@@ -531,7 +540,12 @@ bool Encoder::abs_spi_start_transaction() {
             spi_task_.ncs_gpio = abs_spi_cs_gpio_;
             spi_task_.tx_buf = (uint8_t*)abs_spi_dma_tx_;
             spi_task_.rx_buf = (uint8_t*)abs_spi_dma_rx_;
-            spi_task_.length = 1;
+           if (mode_ == MODE_SPI_ABS_MT6835) { 
+                abs_spi_dma_tx_[0] = 0xA003;
+                abs_spi_dma_tx_[1] = 0x0000;  // Dummy
+                abs_spi_dma_tx_[2] = 0x0000;  // Dummy
+				abs_spi_dma_tx_[3] = 0x0000; // CRC
+            }
             spi_task_.on_complete = [](void* ctx, bool success) { ((Encoder*)ctx)->abs_spi_cb(success); };
             spi_task_.on_complete_ctx = this;
             spi_task_.next = nullptr;
@@ -557,6 +571,21 @@ uint8_t cui_parity(uint16_t v) {
     v ^= v >> 4;
     v ^= v >> 2;
     return ~v & 3;
+}
+
+uint8_t Encoder::mt6835_crc8(const uint8_t* data, size_t len) {
+    uint8_t crc = 0x00; // Init value для MT6835
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            if (crc & 0x80) {
+                crc = (uint8_t)((crc << 1) ^ 0x07); // Poly 0x07
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    return crc;
 }
 
 void Encoder::abs_spi_cb(bool success) {
@@ -595,14 +624,55 @@ void Encoder::abs_spi_cb(bool success) {
             pos = (rawVal >> 2) & 0x3fff;
         } break;
 
+case MODE_SPI_ABS_MT6835: {
+    uint32_t combined = ((uint32_t)abs_spi_dma_rx_[1] << 16) | abs_spi_dma_rx_[2];
+    uint32_t raw_21bit = (combined >> 11) & 0x1FFFFF;
+    uint8_t status = (uint8_t)(abs_spi_dma_rx_[2] & 0x7);
+
+    if (status & 0x01) {
+        set_error(MT6835_ROTATION_OVERSPEED);
+        goto done;
+    }
+    if (status & 0x02) {
+        set_error(MT6835_WEAK_FIELD);
+        goto done;
+    }
+    if (status & 0x04) {
+        set_error(MT6835_UNDER_VOLTAGE);
+        goto done;
+    }
+
+    // --- Check CRC ---
+    // CRC is calculated based on three bytes of data: ANGLE3 (0x03), ANGLE2 (0x04), ANGLE1+STATUS (0x05)
+    uint8_t crc_data[3];
+    crc_data[0] = (uint8_t)(abs_spi_dma_rx_[1] >> 8);   // ANGLE3 (reg 0x03)
+    crc_data[1] = (uint8_t)(abs_spi_dma_rx_[1] & 0xFF); // ANGLE2 (reg 0x04)
+    crc_data[2] = (uint8_t)(abs_spi_dma_rx_[2] >> 8);   // ANGLE1 + STATUS (reg 0x05)
+
+    uint8_t crc_calculated = mt6835_crc8(crc_data, 3);
+    uint8_t crc_received = (uint8_t)(abs_spi_dma_rx_[3] >> 8); // CRC (reg 0x06)
+
+    if (crc_calculated != crc_received) {
+        set_error(MT6835_CRC_MISMATCH);
+        goto done;
+    }
+
+    pos_abs_ = (int32_t)raw_21bit;
+    abs_spi_pos_updated_ = true;
+    if (config_.pre_calibrated) {
+        is_ready_ = true;
+    }
+    goto done;
+} break;
+
         default: {
            set_error(ERROR_UNSUPPORTED_ENCODER_MODE);
            goto done;
         } break;
     }
 
-    pos_abs_ = pos;
-    abs_spi_pos_updated_ = true;
+  //  pos_abs_ = pos;
+  //  abs_spi_pos_updated_ = true;
     if (config_.pre_calibrated) {
         is_ready_ = true;
     }
@@ -732,7 +802,9 @@ bool Encoder::update() {
         case MODE_SPI_ABS_AMS:
         case MODE_SPI_ABS_CUI: 
         case MODE_SPI_ABS_AEAT:
-        case MODE_SPI_ABS_MA732: {
+        case MODE_SPI_ABS_MA732: 
+		case MODE_SPI_ABS_MT6835:
+		{
             if (abs_spi_pos_updated_ == false) {
                 // Low pass filter the error
                 spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);

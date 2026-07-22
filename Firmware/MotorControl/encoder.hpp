@@ -136,13 +136,14 @@ public:
     bool abs_spi_start_transaction();
     void abs_spi_cb(bool success);
     void abs_spi_cs_pin_init();
+	uint8_t mt6835_crc8(const uint8_t* data, size_t len);
     bool abs_spi_pos_updated_ = false;
     Mode mode_ = MODE_INCREMENTAL;
     Stm32Gpio abs_spi_cs_gpio_;
     uint32_t abs_spi_cr1;
     uint32_t abs_spi_cr2;
-    uint16_t abs_spi_dma_tx_[1] = {0xFFFF};
-    uint16_t abs_spi_dma_rx_[1];
+    uint16_t abs_spi_dma_tx_[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+    uint16_t abs_spi_dma_rx_[4];
     Stm32SpiArbiter::SpiTask spi_task_;
 
     constexpr float getCoggingRatio(){

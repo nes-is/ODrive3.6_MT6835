@@ -1246,6 +1246,10 @@ interfaces:
           ABS_SPI_COM_FAIL:
           ABS_SPI_NOT_READY:
           HALL_NOT_CALIBRATED_YET:
+          MT6835_ROTATION_OVERSPEED:
+          MT6835_WEAK_FIELD:
+          MT6835_UNDER_VOLTAGE:
+          MT6835_CRC_MISMATCH:
       is_ready: readonly bool
       index_found: readonly bool
       shadow_count: 
@@ -1599,6 +1603,9 @@ valuetypes:
       SPI_ABS_MA732:
         value: 0x104
         doc: MagAlpha MA732 magnetic encoder
+      SPI_ABS_MT6835:
+        value: 0x105
+        doc: MT6835 magnetic encoder
 
   ODrive.Controller.ControlMode:
     values:
