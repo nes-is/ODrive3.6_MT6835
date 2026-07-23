@@ -1,4 +1,5 @@
 from cantools.database import *
+from cantools.database import can
 from odrive.enums import *
 
 msgList = []
