@@ -42,7 +42,7 @@ void Encoder::setup() {
     spi_task_.config = {
         .Mode = SPI_MODE_MASTER,
         .Direction = SPI_DIRECTION_2LINES,
-        .DataSize = SPI_DATASIZE_16BIT,
+        .DataSize = (mode_ = MODE_SPI_ABS_MT6835) ? SPI_DATASIZE_8BIT : SPI_DATASIZE_16BIT,
         .CLKPolarity = (mode_ == MODE_SPI_ABS_AEAT || mode_ == MODE_SPI_ABS_MA732 || mode_ == MODE_SPI_ABS_MT6835) ? SPI_POLARITY_HIGH : SPI_POLARITY_LOW,
         .CLKPhase = SPI_PHASE_2EDGE,
         .NSS = SPI_NSS_SOFT,
@@ -66,7 +66,7 @@ void Encoder::setup() {
     }
 	    if (mode_ == MODE_SPI_ABS_MT6835) {
 
-        spi_task_.length = 4;
+        spi_task_.length = 6;
     } else {
         spi_task_.length = 1;  
     }
@@ -541,15 +541,16 @@ bool Encoder::abs_spi_start_transaction() {
             spi_task_.tx_buf = (uint8_t*)abs_spi_dma_tx_;
             spi_task_.rx_buf = (uint8_t*)abs_spi_dma_rx_;
            if (mode_ == MODE_SPI_ABS_MT6835) { 
-                abs_spi_dma_tx_[0] = 0xA003;
-                abs_spi_dma_tx_[1] = 0x0000;  // Dummy
-                abs_spi_dma_tx_[2] = 0x0000;  // Dummy
-				abs_spi_dma_tx_[3] = 0x0000; // CRC
+                abs_spi_dma_tx_[0] = 0xA0; //read
+                abs_spi_dma_tx_[1] = 0x03; //reg address  
+                abs_spi_dma_tx_[2] = 0x00; //angle[20:13]
+				abs_spi_dma_tx_[3] = 0x00; //angle[12:5]
+				abs_spi_dma_tx_[4] = 0x00; //angle[4:0]+status[2:0]
+                abs_spi_dma_tx_[5] = 0x00; //crc[7:0]										 
             }
             spi_task_.on_complete = [](void* ctx, bool success) { ((Encoder*)ctx)->abs_spi_cb(success); };
             spi_task_.on_complete_ctx = this;
-            spi_task_.next = nullptr;
-            
+            spi_task_.next = nullptr;          
             spi_arbiter_->transfer_async(&spi_task_);
         } else {
             return false;
@@ -625,10 +626,18 @@ void Encoder::abs_spi_cb(bool success) {
         } break;
 
 case MODE_SPI_ABS_MT6835: {
-    uint32_t combined = ((uint32_t)abs_spi_dma_rx_[1] << 16) | abs_spi_dma_rx_[2];
-    uint32_t raw_21bit = (combined >> 11) & 0x1FFFFF;
-    uint8_t status = (uint8_t)(abs_spi_dma_rx_[2] & 0x7);
-
+  //  uint32_t combined = ((uint32_t)abs_spi_dma_rx_[1] << 16) | abs_spi_dma_rx_[2];
+  //  uint32_t raw_21bit = (combined >> 11) & 0x1FFFFF;
+  //  uint8_t status = (uint8_t)(abs_spi_dma_rx_[2] & 0x7);
+  uint8_t angle3_byte = abs_spi_dma_rx_[2];
+  uint8_t angle2_byte = abs_spi_dma_rx_[3];
+  uint8_t angle1_byte = abs_spi_dma_rx_[4];
+  uint8_t crc_received = abs_spi_dma_rx_[5];
+  
+  uint32_t raw_21bit = ((uint32_t)angle3_byte << 13)
+					 | ((uint32_t)angle2_byte << 5)
+					 | ((uint32_t)angle1_byte >> 3);
+  uint8_t status = angle1_stat & 0x07;
     if (status & 0x01) {
         set_error(MT6835_ROTATION_OVERSPEED);
         goto done;
@@ -645,12 +654,15 @@ case MODE_SPI_ABS_MT6835: {
     // --- Check CRC ---
     // CRC is calculated based on three bytes of data: ANGLE3 (0x03), ANGLE2 (0x04), ANGLE1+STATUS (0x05)
     uint8_t crc_data[3];
-    crc_data[0] = (uint8_t)(abs_spi_dma_rx_[1] >> 8);   // ANGLE3 (reg 0x03)
-    crc_data[1] = (uint8_t)(abs_spi_dma_rx_[1] & 0xFF); // ANGLE2 (reg 0x04)
-    crc_data[2] = (uint8_t)(abs_spi_dma_rx_[2] >> 8);   // ANGLE1 + STATUS (reg 0x05)
-
-    uint8_t crc_calculated = mt6835_crc8(crc_data, 3);
-    uint8_t crc_received = (uint8_t)(abs_spi_dma_rx_[3] >> 8); // CRC (reg 0x06)
+ //   crc_data[0] = (uint8_t)(abs_spi_dma_rx_[1] >> 8);   // ANGLE3 (reg 0x03)
+ //   crc_data[1] = (uint8_t)(abs_spi_dma_rx_[1] & 0xFF); // ANGLE2 (reg 0x04)
+ //  crc_data[2] = (uint8_t)(abs_spi_dma_rx_[2] >> 8);   // ANGLE1 + STATUS (reg 0x05)
+ 
+	uint8_t crc_data[3] = {angle3_byte, angle2_byte, angle1_stat};
+	uint8_t crc_calculated = mt6835_crc8(crc_data,3);
+ 
+  //  uint8_t crc_calculated = mt6835_crc8(crc_data, 3);
+  //  uint8_t crc_received = (uint8_t)(abs_spi_dma_rx_[3] >> 8); // CRC (reg 0x06)
 
     if (crc_calculated != crc_received) {
         set_error(MT6835_CRC_MISMATCH);
