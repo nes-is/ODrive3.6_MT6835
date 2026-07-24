@@ -640,21 +640,21 @@ case MODE_SPI_ABS_MT6835: {
 					 
   uint8_t status = angle1_stat & 0x07;
     if (status & 0x01) {
-        set_error(MT6835_ROTATION_OVERSPEED);
+        set_error(ERROR_MT6835_ROTATION_OVERSPEED);
         goto done;
     }
     if (status & 0x02) {
-        set_error(MT6835_WEAK_FIELD);
+        set_error(ERROR_MT6835_WEAK_FIELD);
         goto done;
     }
     if (status & 0x04) {
-        set_error(MT6835_UNDER_VOLTAGE);
+        set_error(ERROR_MT6835_UNDER_VOLTAGE);
         goto done;
     }
 
     // --- Check CRC ---
     // CRC is calculated based on three bytes of data: ANGLE3 (0x03), ANGLE2 (0x04), ANGLE1+STATUS (0x05)
-    uint8_t crc_data[3];
+  //  uint8_t crc_data[3];
  //   crc_data[0] = (uint8_t)(abs_spi_dma_rx_[1] >> 8);   // ANGLE3 (reg 0x03)
  //   crc_data[1] = (uint8_t)(abs_spi_dma_rx_[1] & 0xFF); // ANGLE2 (reg 0x04)
  //  crc_data[2] = (uint8_t)(abs_spi_dma_rx_[2] >> 8);   // ANGLE1 + STATUS (reg 0x05)
@@ -666,7 +666,7 @@ case MODE_SPI_ABS_MT6835: {
   //  uint8_t crc_received = (uint8_t)(abs_spi_dma_rx_[3] >> 8); // CRC (reg 0x06)
 
     if (crc_calculated != crc_received) {
-        set_error(MT6835_CRC_MISMATCH);
+        set_error(ERROR_MT6835_CRC_MISMATCH);
         goto done;
     }
 
