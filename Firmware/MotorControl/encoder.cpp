@@ -631,12 +631,13 @@ case MODE_SPI_ABS_MT6835: {
   //  uint8_t status = (uint8_t)(abs_spi_dma_rx_[2] & 0x7);
   uint8_t angle3_byte = abs_spi_dma_rx_[2];
   uint8_t angle2_byte = abs_spi_dma_rx_[3];
-  uint8_t angle1_byte = abs_spi_dma_rx_[4];
+  uint8_t angle1_stat = abs_spi_dma_rx_[4];
   uint8_t crc_received = abs_spi_dma_rx_[5];
   
   uint32_t raw_21bit = ((uint32_t)angle3_byte << 13)
 					 | ((uint32_t)angle2_byte << 5)
-					 | ((uint32_t)angle1_byte >> 3);
+					 | ((uint32_t)angle1_stat >> 3);
+					 
   uint8_t status = angle1_stat & 0x07;
     if (status & 0x01) {
         set_error(MT6835_ROTATION_OVERSPEED);
